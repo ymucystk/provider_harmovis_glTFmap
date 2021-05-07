@@ -13,7 +13,21 @@ import {
 //import { Layer } from '@deck.gl/core'
 
 import {GeoJsonLayer, LineLayer, ArcLayer, ScatterplotLayer} from '@deck.gl/layers'
+import { CubeGeometry } from '@luma.gl/engine'
 
+const CUBE_POSITIONS = new Float32Array([
+	-1,-1,2,1,-1,2,1,1,2,-1,1,2,
+	-1,-1,-2,-1,1,-2,1,1,-2,1,-1,-2,
+	-1,1,-2,-1,1,2,1,1,2,1,1,-2,
+	-1,-1,-2,1,-1,-2,1,-1,2,-1,-1,2,
+	1,-1,-2,1,1,-2,1,1,2,1,-1,2,
+	-1,-1,-2,-1,-1,2,-1,1,2,-1,1,-2
+	]);
+const ATTRIBUTES = {
+	POSITION: {size: 3, value: new Float32Array(CUBE_POSITIONS)},
+};
+const iconmesh = new CubeGeometry({attributes: ATTRIBUTES});
+  
 import BarLayer from './BarLayer'
 import MeshLayer from './MeshLayer'
 import BarGraphInfoCard from '../components/BarGraphInfoCard'
@@ -38,20 +52,22 @@ import Controller from '../components/controller'
 import HeatmapLayer from './HeatmapLayer'
 //import layerSettings from '../reducer/layerSettings'
 
-import { ScenegraphLayer } from '@deck.gl/mesh-layers';
+import { ScenegraphLayer, SimpleMeshLayer } from '@deck.gl/mesh-layers';
 import {registerLoaders} from '@loaders.gl/core';
+//import {OBJLoader} from '@loaders.gl/obj';
 import {GLTFLoader} from '@loaders.gl/gltf';
 
+//registerLoaders([OBJLoader,GLTFLoader]);
 registerLoaders([GLTFLoader]);
-
-const scenegraph = '../object/willowgarage.gltf';
+//const objmesh = '../objdata/3dmap.obj';
+const scenegraph = '../objdata/willowgarage.gltf';
 
 class App extends Container<any,any> {
 	private lines = 0;
 
 	constructor (props: any) {
 		super(props)
-		const { setSecPerHour, setLeading, setTrailing } = props.actions
+		const { setSecPerHour, setLeading, setTrailing,setInitialViewChange } = props.actions
 		const worker = new Worker('socketWorker.js'); // worker for socket-io communication.
 		const self = this;
 		worker.onmessage = (e) => {
@@ -91,6 +107,8 @@ class App extends Container<any,any> {
 			} else if (isLabelInfoMsg(msg)){
 				console.log("LabelText")
 				store.dispatch(actions.setTopLabelInfo(msg.payload))
+			} else if (msg.type === 'RECEIVED_EVENT') {
+				self.getEvent(msg.payload)
 			} else if (isHarmoVISConfMsg(msg)){
 				self.resolveHarmoVISConf(msg.payload)
 			}
@@ -100,6 +118,7 @@ class App extends Container<any,any> {
 		setSecPerHour(3600)
 		setLeading(3)
 		setTrailing(3)
+		setInitialViewChange(false)
 
 
 
@@ -452,14 +471,19 @@ class App extends Container<any,any> {
 	getAgents (dt : AgentData) { // receive Agents information from worker thread.
 		const { actions, movesbase, agentColor } = this.props
 		const agents = dt.dt.agents
-		const time = dt.ts // set time as now. (If data have time, ..)
+		const time = dt.ts // set time
 		let  setMovesbase = movesbase
 
 		agents.forEach((agent, agn) => {
 			let flag = false;
+			let ag_color = agentColor;
+			if (agent.id >= 500 ){ // for Cart!
+				ag_color =  [0,50,255,200];
+			}
 			setMovesbase.forEach(
 				(
 					v: {
+						type: any;
 						id: number;
 						mtype: number;
 						departuretime: number;
@@ -481,7 +505,7 @@ class App extends Container<any,any> {
 						elapsedtime: time,
 						position: [agent.point[0], agent.point[1], 0],
 						angle: 0,
-						color: agent.color || agentColor,
+						color: ag_color,
 						speed: 0.5
 					});
 					flag = true;
@@ -489,6 +513,7 @@ class App extends Container<any,any> {
 			});
 			if (!flag) {
 				setMovesbase.push({
+					type: 'agents',
 					mtype: 0,
 					id: agent.id || agn,
 					departuretime: time,
@@ -498,7 +523,7 @@ class App extends Container<any,any> {
 						position: [agent.point[0], agent.point[1], 0],
 						angle: 0,
 						speed: 0.5,
-						color: agent.color || agentColor,
+						color: ag_color,
 					}]
 				})
 			}
@@ -534,11 +559,13 @@ class App extends Container<any,any> {
 	}
 
 
+	// showing robot location
 	getEvent (socketData:any) {
 		const { actions, movesbase } = this.props
-		const { mtype, id, lat, lon, angle, speed } = JSON.parse(socketData)
-		// 	console.log("dt:",mtype,id,time,lat,lon,angle,speed, socketData);
-		const time = Date.now() / 1000 // set time as now. (If data have time, ..)
+		const { mtype, id, lat, lon, angle, speed, ts } = socketData;
+		//  console.log("getEvent socketData:", socketData);
+//		var time = Date.now() / 1000 // set time as now. (If data have time, ..)
+		let time = ts
 		let hit = false
 		const movesbasedata = [...movesbase] // why copy !?
 		const setMovesbase = []
@@ -562,6 +589,7 @@ class App extends Container<any,any> {
 		}
 		if (!hit) {
 			setMovesbase.push({
+				type: 'event',
 				mtype, id,
 				departuretime: time,
 				arrivaltime: time,
@@ -759,6 +787,21 @@ class App extends Container<any,any> {
 			}))
 		}
 
+//
+/*		layers.push(
+			new SimpleMeshLayer({
+                id:'meshmap',
+                data:[{position:[136.906428,35.181453]}],
+                mesh:objmesh,
+                getColor:[255,255,255,255],
+                getOrientation:[0,180,90],
+                opacity: 0.3,
+              })
+
+
+		)
+*/
+
 		if (lines.length > 0) {
 //			this.lines = 0
 			layers.push(
@@ -831,11 +874,15 @@ class App extends Container<any,any> {
 					movedData,
 					clickedObject, 
 					actions,
-					visible: this.state.moveDataVisible,
+//1107??			//	visible: this.state.moveDataVisible,
 					optionVisible: this.state.moveOptionVisible,
 					layerRadiusScale: 0.03,
 					layerOpacity: 0.8,
 					getRouteWidth: () => 0.2,
+					iconDesignations:[
+						{type:'agents', layer:'Scatterplot', getColor:()=>[0,255,0,255]},
+						{type:'event', layer:'SimpleMesh', getColor:()=>[255,255,0,255], mesh:iconmesh, sizeScale: 0.2},
+					],
 //					getStrokeWidth: 0.1,
 //					getColor : [0,200,20] as number[],
 					getArchWidth: (x : any) => 0.2, 
@@ -843,7 +890,7 @@ class App extends Container<any,any> {
 					sizeScale: 20,
 					iconChange: false,
 					optionChange: false, // this.state.optionChange,
-					onHover
+//1107 ??					onHover
 				}) as any
 			)
 		}

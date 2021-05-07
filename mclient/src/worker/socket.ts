@@ -20,25 +20,25 @@ self.addEventListener("message", (e: any) => {
 
 const getToken = () => {
     socket.emit('get_mapbox_token', {})
-//    console.log('Get mapbox token')
+    console.log('Ask toGet mapbox token')
 }
 
 
 socket.on('connect', () => {
     console.log('Socket.IO connected!')
     worker.postMessage({ type: 'CONNECTED'} as SocketMessage<void>);
-    setTimeout(getToken, 500) // 500msec after send get=mapbox-token
+    setTimeout(getToken, 1500) // 500msec after send get=mapbox-token
 })
 
 socket.on('mapbox_token', (payload: string) => {
-//    console.log('token Got:' + payload)
+    console.log('token Got:' + payload)
     worker.postMessage({
         type: 'RECEIVED_MAPBOX_TOKEN',
         payload
     } as SocketMessage<string> );
     // this
     if (wcounter === 0){
-        startRecivedData();
+        setTimeout(startRecivedData, 500) // 500msec after send get=mapbox-token
         wcounter ++   // assign only once.
     }
 })
@@ -144,6 +144,14 @@ function startRecivedData() {
             type: 'RECEIVED_AGENT',
             payload
         } as SocketMessage<AgentData>)
+    })
+    socket.on('event', (str: string) => {
+        const payload: any = JSON.parse(str);
+//        console.log('event:' + str.length)
+        worker.postMessage({
+            type: 'RECEIVED_EVENT',
+            payload
+        } as SocketMessage<any>)
     })
     socket.on('pitch', (str: string) =>{
 //        console.log('Pitch:' + str)

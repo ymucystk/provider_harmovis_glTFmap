@@ -5,19 +5,19 @@ import { GridType } from '../constants/MapSettings'
 
 export interface HeatmapState {
   selectedType: GridType
+  enabledHeatmap: boolean
   particleCount: number
   gridSize: number
   gridHeight: number
-  enabledHeatmap: boolean
   extruded: boolean
 }
 
 const initialState: HeatmapState  = {
   selectedType: GridType.Hexagon,
-  enabledHeatmap: true,
+  enabledHeatmap: false,
+  particleCount: 3000,
   gridSize: 10,
   gridHeight: 1,
-  particleCount: 3000,
   extruded: true
 }
 

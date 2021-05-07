@@ -10,14 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
 	gosocketio "github.com/mtfelian/golang-socketio"
-	"github.com/mtfelian/golang-socketio/transport"
 	fleet "github.com/synerex/proto_fleet"
 	geo "github.com/synerex/proto_geography"
+	mqtt "github.com/synerex/proto_mqtt"
 	pagent "github.com/synerex/proto_people_agent"
 	api "github.com/synerex/synerex_api"
 	pbase "github.com/synerex/synerex_proto"
@@ -31,64 +33,21 @@ var (
 	assetDir        = flag.String("assetdir", "", "set Web client dir")
 	mapbox          = flag.String("mapbox", "", "Set Mapbox access token")
 	port            = flag.Int("port", 10080, "HarmoVis Ext Provider Listening Port")
+	notUnity        = flag.Bool("noUnity", false, "do not use unity")
 	mu              = new(sync.Mutex)
+	version         = "0.03"
 	assetsDir       http.FileSystem
 	ioserv          *gosocketio.Server
 	sxServerAddress string
 	mapboxToken     string
 )
 
-func toJSON(m map[string]interface{}, utime int64) string {
-	s := fmt.Sprintf("{\"mtype\":%d,\"id\":%d,\"time\":%d,\"lat\":%f,\"lon\":%f,\"angle\":%f,\"speed\":%d}",
-		0, int(m["vehicle_id"].(float64)), utime, m["coord"].([]interface{})[0].(float64), m["coord"].([]interface{})[1].(float64), m["angle"].(float64), int(m["speed"].(float64)))
-	return s
-}
-
-func handleFleetMessage(sv *gosocketio.Server, param interface{}) {
-	var bmap map[string]interface{}
-	utime := time.Now().Unix()
-	bmap = param.(map[string]interface{})
-	for _, v := range bmap["vehicles"].([]interface{}) {
-		m, _ := v.(map[string]interface{})
-		s := toJSON(m, utime)
-		sv.BroadcastToAll("event", s)
-	}
-}
-
-func getFleetInfo(serv string, sv *gosocketio.Server, ch chan error) {
-	fmt.Printf("Dial to [%s]\n", serv)
-	sioClient, err := gosocketio.Dial(serv+"socket.io/?EIO=3&transport=websocket", transport.DefaultWebsocketTransport())
-	if err != nil {
-		log.Printf("SocketIO Dial error: %s", err)
-		return
-	}
-
-	sioClient.On(gosocketio.OnConnection, func(c *gosocketio.Channel, param interface{}) {
-		fmt.Println("Fleet-Provider socket.io connected ", c)
-	})
-
-	sioClient.On(gosocketio.OnDisconnection, func(c *gosocketio.Channel, param interface{}) {
-		fmt.Println("Fleet-Provider socket.io disconnected ", c)
-		ch <- fmt.Errorf("Disconnected!\n")
-	})
-
-	sioClient.On("vehicle_status", func(c *gosocketio.Channel, param interface{}) {
-		handleFleetMessage(sv, param)
-	})
-
-}
-
-func runFleetInfo(serv string, sv *gosocketio.Server) {
-	ch := make(chan error)
-	for {
-		time.Sleep(3 * time.Second)
-		getFleetInfo(serv, sv, ch)
-		res := <-ch
-		if res == nil {
-			break
-		}
-	}
-}
+const (
+	latBase = 35.181453  //
+	lonBase = 136.906428 //
+	xscale  = 9.109
+	yscale  = 11.094
+)
 
 // assetsFileHandler for static Data
 func assetsFileHandler(w http.ResponseWriter, r *http.Request) {
@@ -171,15 +130,74 @@ func run_server() *gosocketio.Server {
 type MapMarker struct {
 	mtype int32   `json:"mtype"`
 	id    int32   `json:"id"`
-	lat   float32 `json:"lat"`
-	lon   float32 `json:"lon"`
+	lat   float64 `json:"lat"`
+	lon   float64 `json:"lon"`
 	angle float32 `json:"angle"`
 	speed int32   `json:"speed"`
+	ts    int64   `json:"ts"`
+	ms    int     `json:"ts"`
 }
 
+type Position struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+}
+
+type Orientation struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	Z float64 `json:"z"`
+	W float64 `json:"w"`
+}
+
+type Pose struct {
+	Header struct {
+		Seq   int `json:"seq"`
+		Stamp struct {
+			Secs  int `json:"secs"`
+			Nsecs int `json:"nsecs"`
+		} `json:"stamp"`
+		FrameID string `json:"frame_id"`
+	} `json:"header"`
+	Pose struct {
+		Pos Position    `json:"position"`
+		Ori Orientation `json:"orientation"`
+	} `json:"pose"`
+}
+
+type HumanPose struct {
+	Header struct {
+		Seq   int `json:"seq"`
+		Stamp struct {
+			Secs  int `json:"secs"`
+			Nsecs int `json:"nsecs"`
+		} `json:"stamp"`
+		FrameID int `json:"frame_id"`
+	} `json:"header"`
+	Pose struct {
+		Pos Position    `json:"position"`
+		Ori Orientation `json:"orientation"`
+	} `json:"pose"`
+}
+
+var (
+	eventTimeStamp  int64     = 0
+	eventPoint      []float64 = []float64{0, 0}
+	agent1TimeStamp int64     = 0
+	agent1Point     []float64 = []float64{0, 0}
+	agent2TimeStamp int64     = 0
+	agent2Point     []float64 = []float64{0, 0}
+)
+
 func (m *MapMarker) GetJson() string {
-	s := fmt.Sprintf("{\"mtype\":%d,\"id\":%d,\"lat\":%f,\"lon\":%f,\"angle\":%f,\"speed\":%d}",
-		m.mtype, m.id, m.lat, m.lon, m.angle, m.speed)
+	s := fmt.Sprintf("{\"mtype\":%d,\"id\":%d,\"lat\":%f,\"lon\":%f,\"angle\":%f,\"speed\":%d,\"ts\":%d.%03d}",
+		m.mtype, m.id, m.lat, m.lon, m.angle, m.speed, m.ts, m.ms)
+	return s
+}
+func (m *MapMarker) GetJsonTime() string {
+	s := fmt.Sprintf("{\"mtype\":%d,\"id\":%d,\"lat\":%f,\"lon\":%f,\"angle\":%f,\"speed\":%d,\"ts\":%s}",
+		m.mtype, m.id, m.lat, m.lon, m.angle, m.speed, time.Unix(m.ts, int64(m.ms*1000000)).Format(time.RFC3339))
 	return s
 }
 
@@ -190,10 +208,12 @@ func supplyRideCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		mm := &MapMarker{
 			mtype: int32(0),
 			id:    flt.VehicleId,
-			lat:   flt.Coord.Lat,
-			lon:   flt.Coord.Lon,
+			lat:   float64(flt.Coord.Lat),
+			lon:   float64(flt.Coord.Lon),
 			angle: flt.Angle,
 			speed: flt.Speed,
+			ts:    sp.Ts.AsTime().Unix(),                 // unix seconds
+			ms:    sp.Ts.AsTime().Nanosecond() / 1000000, // Milliseconds
 		}
 		//		jsondata, err := json.Marshal(*mm)
 		//		fmt.Println("rcb",mm.GetJson())
@@ -243,7 +263,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		if err == nil {
 			strjs := string(geo.Data)
 			log.Printf("Obtaining %s, id:%d, %s, len:%d ", geo.Type, geo.Id, geo.Label, len(strjs))
-			//			log.Printf("Data '%s'", strjs)
+			log.Printf("Data '%s'", strjs)
 			mu.Lock()
 			ioserv.BroadcastToAll("geojson", strjs)
 			mu.Unlock()
@@ -255,7 +275,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		if err == nil {
 
 			jsonBytes, _ := json.Marshal(geo.Lines)
-			log.Printf("LinesParsed: %d", len(jsonBytes))
+			//			log.Printf("Lines: %v", string(jsonBytes))
 
 			mu.Lock()
 			ioserv.BroadcastToAll("lines", string(jsonBytes))
@@ -269,7 +289,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 			log.Printf("ViewState: %v", string(jsonBytes))
 
 			mu.Lock()
-			//ioserv.BroadcastToAll("mapbox_token", mapboxToken)
+			ioserv.BroadcastToAll("mapbox_token", mapboxToken)
 
 			ioserv.BroadcastToAll("viewstate", string(jsonBytes))
 			mu.Unlock()
@@ -292,7 +312,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		err := proto.Unmarshal(sp.Cdata.Entity, cms)
 		if err == nil {
 			jsonBytes, _ := json.Marshal(cms)
-			//			log.Printf("ClearMoves: %v", string(jsonBytes))
+			log.Printf("ClearMoves: %v", string(jsonBytes))
 
 			mu.Lock()
 			ioserv.BroadcastToAll("clearMoves", string(jsonBytes))
@@ -303,7 +323,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		err := proto.Unmarshal(sp.Cdata.Entity, cms)
 		if err == nil {
 			jsonBytes, _ := json.Marshal(cms)
-			//			log.Printf("Pitch: %v", string(jsonBytes))
+			log.Printf("Pitch: %v", string(jsonBytes))
 
 			mu.Lock()
 			ioserv.BroadcastToAll("pitch", string(jsonBytes))
@@ -314,7 +334,7 @@ func supplyGeoCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
 		err := proto.Unmarshal(sp.Cdata.Entity, cms)
 		if err == nil {
 			jsonBytes, _ := json.Marshal(cms)
-			//			log.Printf("Bearing: %v", string(jsonBytes))
+			log.Printf("Bearing: %v", string(jsonBytes))
 
 			mu.Lock()
 			ioserv.BroadcastToAll("bearing", string(jsonBytes))
@@ -394,52 +414,183 @@ func subscribeGeoSupply(client *sxutil.SXServiceClient) {
 	}
 }
 
-func supplyPAgentCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
-	//	log.Printf("Agent: %v", *sp)
-	switch sp.SupplyName {
-	case "Agents":
-		agents := &pagent.PAgents{}
-		err := proto.Unmarshal(sp.Cdata.Entity, agents)
-		//		log.Printf("Agent: %v", *agents)
-		if err == nil {
-			seconds := sp.Ts.GetSeconds()
-			nanos := sp.Ts.GetNanos()
-
-			jsonBytes, err := json.Marshal(agents)
-			if err == nil {
-				jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", seconds, int(nanos/1000000), string(jsonBytes))
-				log.Printf("Lines: %v", jstr)
+func supplyMQTTCallback(clt *sxutil.SXServiceClient, sp *api.Supply) {
+	mqttRCD := mqtt.MQTTRecord{}
+	err := proto.Unmarshal(sp.Cdata.Entity, &mqttRCD)
+	timeStamp := sp.Ts.AsTime().Unix()          // unix time
+	ms := sp.Ts.AsTime().Nanosecond() / 1000000 // Milliseconds
+	if err == nil {
+		var rid int32
+		if strings.HasPrefix(mqttRCD.Topic, "pos/robot") {
+			n, nerr := fmt.Sscanf(mqttRCD.Topic, "pos/robot/%d/pose", &rid)
+			if n == 1 && nerr == nil { // robot pose into location
+				if rid < 10 {
+					rid += 100 // we just check for different name space for agent and robot.
+				}
+				var pose Pose
+				jerr := json.Unmarshal(mqttRCD.Record, &pose)
+				var angle float32
+				if *notUnity {
+					angle = float32(pose.Pose.Ori.Y)
+				} else {
+					angle = float32(pose.Pose.Ori.Z)
+				}
+				if jerr == nil {
+					var lat, lon float64
+					if *notUnity {
+						lat = float64(latBase + -0.0001*(pose.Pose.Pos.Y/yscale))
+						lon = float64(lonBase + -0.0001*(pose.Pose.Pos.X/xscale))
+					} else {
+						lat = float64(latBase + 0.0001*(pose.Pose.Pos.Z/yscale))
+						lon = float64(lonBase + 0.0001*(pose.Pose.Pos.X/xscale))
+					}
+					mm := &MapMarker{
+						mtype: int32(0),
+						id:    rid,
+						lat:   lat,
+						lon:   lon,
+						angle: angle,
+						speed: 1,
+						ts:    timeStamp,
+						ms:    ms,
+					}
+					if eventTimeStamp != timeStamp || eventPoint[0] != lon || eventPoint[1] != lat {
+						log.Printf("Map:%s", mm.GetJsonTime())
+						mu.Lock()
+						ioserv.BroadcastToAll("event", mm.GetJson())
+						mu.Unlock()
+						eventTimeStamp = timeStamp
+						eventPoint[0] = lon
+						eventPoint[1] = lat
+					}
+				} else {
+					log.Printf("Unmarshal MQTT robot record error! %v %v", jerr, mqttRCD)
+				}
+			}
+		} else if strings.HasPrefix(mqttRCD.Topic, "pos/human/all") {
+			if *notUnity {
+				return
+			}
+			var poses []Pose
+			jerr := json.Unmarshal(mqttRCD.Record, &poses)
+			if jerr == nil {
+				agts := make([]*pagent.PAgent, len(poses))
+				for i, ps := range poses {
+					fid, _ := strconv.Atoi(ps.Header.FrameID)
+					agts[i] = &pagent.PAgent{
+						Id:    int32(fid),
+						Point: []float64{lonBase + 0.0001*(ps.Pose.Pos.X/xscale), latBase + 0.0001*(ps.Pose.Pos.Z/yscale)},
+					}
+				}
+				agents := pagent.PAgents{
+					Agents: agts,
+				}
+				seconds := time.Now().Unix()
+				//				sp.Ts.GetSeconds()
+				//				nanos := sp.Ts.GetNanos()
+				jsonBytes, _ := json.Marshal(agents)
+				jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", seconds, ms, string(jsonBytes))
+				log.Printf("Agents:%s", jstr)
 				mu.Lock()
 				ioserv.BroadcastToAll("agents", jstr)
 				mu.Unlock()
 			} else {
-				log.Printf("Invalid Agents! %v count %d", err, len(agents.Agents))
-				ags := make([]*pagent.PAgent, 0)
-				ct := 0
-				for i := 0; i < len(agents.Agents); i++ {
-					//					log.Printf("Agent: %d, %f, %f , %v", agents.Agents[i].Id, agents.Agents[i].Point[0], agents.Agents[i].Point[1], agents.Agents[i])
-					_, err2 := json.Marshal(agents.Agents[i])
-					if err2 == nil {
-						ags = append(ags, agents.Agents[i])
-						ct++
-					}
+				log.Printf("Unmarshal MQTT human record error! %v %v", jerr, mqttRCD)
+			}
+
+		} else if strings.HasPrefix(mqttRCD.Topic, "pos/human/") {
+			var pose HumanPose
+			var id int32
+			fmt.Sscanf(mqttRCD.Topic, "pos/human/%d/pose", &id)
+			jerr := json.Unmarshal(mqttRCD.Record, &pose)
+			if jerr != nil {
+				log.Printf("Unmarshal MQTT human record error! %v %v", jerr, mqttRCD)
+			} else {
+				agts := make([]*pagent.PAgent, 1)
+				agt := &pagent.PAgent{
+					Id:    id,
+					Point: []float64{lonBase + 0.0001*(pose.Pose.Pos.X/xscale), latBase + 0.0001*(pose.Pose.Pos.Y/yscale)},
 				}
-				ag2 := &pagent.PAgents{
-					Agents: ags,
+				agts[0] = agt
+				agents := pagent.PAgents{
+					Agents: agts,
 				}
-				jsonBytes, err3 := json.Marshal(ag2)
-				if err3 == nil {
-					jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", seconds, int(nanos/1000000), string(jsonBytes))
-					//				log.Printf("Lines: %v", jstr)
+				if agent1TimeStamp != timeStamp || agent1Point[0] != pose.Pose.Pos.X || agent1Point[1] != pose.Pose.Pos.Y {
+					jsonBytes, _ := json.Marshal(agents)
+					jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", timeStamp, ms, string(jsonBytes))
+					log.Printf("Agent%d:%s", id, jstr)
 					mu.Lock()
 					ioserv.BroadcastToAll("agents", jstr)
 					mu.Unlock()
-				} else {
-					log.Printf("Invalid Agents! %v again", err3)
-
+					agent1TimeStamp = timeStamp
+					agent1Point[0] = pose.Pose.Pos.X
+					agent1Point[1] = pose.Pose.Pos.Y
 				}
-
 			}
+		} else if strings.HasPrefix(mqttRCD.Topic, "pos/cart/") {
+			var pose HumanPose
+			var cid int32
+			fmt.Sscanf(mqttRCD.Topic, "pos/cart/%d/pose", &cid)
+			if cid < 10 {
+				cid += 500 // we just check for different name space for agent and robot and cart.
+			}
+
+			jerr := json.Unmarshal(mqttRCD.Record, &pose)
+			if jerr != nil {
+				log.Printf("Unmarshal MQTT cart record error! %v %v", jerr, mqttRCD)
+			} else {
+				agts := make([]*pagent.PAgent, 1)
+				agt := &pagent.PAgent{
+					Id:    cid,
+					Point: []float64{lonBase + 0.0001*(pose.Pose.Pos.X/xscale), latBase + 0.0001*(pose.Pose.Pos.Y/yscale)},
+				}
+				agts[0] = agt
+				agents := pagent.PAgents{
+					Agents: agts,
+				}
+				if agent2TimeStamp != timeStamp || agent2Point[0] != pose.Pose.Pos.X || agent2Point[1] != pose.Pose.Pos.Y {
+					jsonBytes, _ := json.Marshal(agents)
+					jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", timeStamp, ms, string(jsonBytes))
+					log.Printf("Agent%d:%s", cid, jstr)
+					mu.Lock()
+					ioserv.BroadcastToAll("agents", jstr)
+					mu.Unlock()
+					agent2TimeStamp = timeStamp
+					agent2Point[0] = pose.Pose.Pos.X
+					agent2Point[1] = pose.Pose.Pos.Y
+				}
+			}
+		} //else if strings.HasPrefix(mqttRCD.Topic, "pos/robot") {
+
+	} else {
+		log.Printf("Unmarshal Proto error! %v %v", err, mqttRCD)
+	}
+}
+
+func subscribeMQTTSupply(client *sxutil.SXServiceClient) {
+	ctx := context.Background() //
+	for {
+		err := client.SubscribeSupply(ctx, supplyMQTTCallback)
+		log.Printf("Error:Suply %s\n", err.Error())
+		// we need torestart
+		reconnectClient(client)
+	}
+}
+
+func supplyPAgentCallback(cl *sxutil.SXServiceClient, sp *api.Supply) {
+	switch sp.SupplyName {
+	case "Agents":
+		agents := &pagent.PAgents{}
+		err := proto.Unmarshal(sp.Cdata.Entity, agents)
+		if err == nil {
+			seconds := sp.Ts.GetSeconds()
+			nanos := sp.Ts.GetNanos()
+			jsonBytes, _ := json.Marshal(agents)
+			jstr := fmt.Sprintf("{ \"ts\": %d.%03d, \"dt\": %s}", seconds, int(nanos/1000000), string(jsonBytes))
+			//				log.Printf("Lines: %v", jstr)
+			mu.Lock()
+			ioserv.BroadcastToAll("agents", jstr)
+			mu.Unlock()
 		}
 	}
 
@@ -488,12 +639,11 @@ func monitorStatus() {
 }
 
 func main() {
-	log.Printf("HarmovisLayers(%s) built %s sha1 %s", sxutil.GitVer, sxutil.BuildTime, sxutil.Sha1Ver)
 	flag.Parse()
 
-	channelTypes := []uint32{pbase.RIDE_SHARE, pbase.PEOPLE_AGENT_SVC, pbase.GEOGRAPHIC_SVC}
+	channelTypes := []uint32{pbase.RIDE_SHARE, pbase.PEOPLE_AGENT_SVC, pbase.GEOGRAPHIC_SVC, pbase.MQTT_GATEWAY_SVC}
 	var rerr error
-	sxServerAddress, rerr = sxutil.RegisterNode(*nodesrv, "HarmoVisLayers", channelTypes, nil)
+	sxServerAddress, rerr = sxutil.RegisterNode(*nodesrv, "HarmoVisglTFmap", channelTypes, nil)
 	if rerr != nil {
 		log.Fatal("Can't register node ", rerr)
 	}
@@ -505,7 +655,7 @@ func main() {
 	wg := sync.WaitGroup{} // for syncing other goroutines
 
 	ioserv = run_server()
-
+	fmt.Printf("Running HarmoVisObjMap Server.\n")
 	if ioserv == nil {
 		os.Exit(1)
 	}
@@ -521,12 +671,17 @@ func main() {
 	argJSON3 := fmt.Sprintf("{Client:Map:Geo}")
 	geo_client := sxutil.NewSXServiceClient(client, pbase.GEOGRAPHIC_SVC, argJSON3)
 
+	argJSON4 := fmt.Sprintf("{Client:MQTT}")
+	mqtt_client := sxutil.NewSXServiceClient(client, pbase.MQTT_GATEWAY_SVC, argJSON4)
+
 	wg.Add(1)
 	go subscribeRideSupply(rideClient)
 
 	go subscribePAgentSupply(pa_client)
 
 	go subscribeGeoSupply(geo_client)
+
+	go subscribeMQTTSupply(mqtt_client)
 
 	go monitorStatus() // keep status
 
@@ -535,7 +690,7 @@ func main() {
 	serveMux.Handle("/socket.io/", ioserv)
 	serveMux.HandleFunc("/", assetsFileHandler)
 
-	log.Printf("Starting Harmoware-VIS Layers Provider %s on port %d", sxutil.GitVer, *port)
+	log.Printf("Starting Harmoware-VIS glTFMap Provider %s  on port %d", version, *port)
 	err := http.ListenAndServe(fmt.Sprintf("0.0.0.0:%d", *port), serveMux)
 	if err != nil {
 		log.Fatal(err)

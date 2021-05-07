@@ -16,6 +16,7 @@ const ToggleHeatMap: React.FC<any> = prop  => {
       type='checkbox'
       checked={state.enabledHeatmap}
       onChange={onChangeHandler}
+      defaultChecked={false}
     />
     {state.enabledHeatmap ? '  ENABLED' : '  DISABLED'}
   </div>)
