@@ -239,7 +239,7 @@ func reconnectClient(client *sxutil.SXServiceClient) {
 			client.Client = newClt
 		}
 	} else { // someone may connect!
-		log.Printf("Use reconnected server\n", sxServerAddress)
+		log.Printf("Use reconnected server [%s]\n", sxServerAddress)
 	}
 	mu.Unlock()
 }
