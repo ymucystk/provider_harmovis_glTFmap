@@ -1,16 +1,11 @@
 import React from 'react'
 
-import { useSelector, useDispatch } from 'react-redux'
 import * as actions from '../actions/actions'
 
 import {
-	Container, connectToHarmowareVis, HarmoVisLayers, MovesLayer, MovesInput,
-	LoadingIcon, FpsDisplay, Movesbase, Actions, LineMapLayer
+	Container, connectToHarmowareVis, HarmoVisLayers, MovesLayer,
+	LoadingIcon, FpsDisplay, Movesbase
 } from 'harmoware-vis'
-
-// import './App.scss';
-// import { StaticMap,  } from 'react-map-gl';
-//import { Layer } from '@deck.gl/core'
 
 import {GeoJsonLayer, LineLayer, ArcLayer, ScatterplotLayer} from '@deck.gl/layers'
 import { CubeGeometry } from '@luma.gl/engine'
@@ -131,18 +126,6 @@ class App extends Container<any,any> {
 			fpsVisible:true,
 			optionChange: false,
 			mapbox_token: '',
-			
-//			geojson: null,
-//			lines: [],
-/*			viewState: {
-				longitude: 136.8163486 ,
-				latitude: 34.8592285,
-				zoom: 17,
-				bearing: 0,
-				pitch: 0,
-				width: 500,
-				height: 500
-			}, */
 			linecolor: [0,155,155],
 			popup: [0, 0, '']
 		}

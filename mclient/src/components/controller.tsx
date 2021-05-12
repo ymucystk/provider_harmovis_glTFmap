@@ -1,11 +1,9 @@
 import * as React from 'react'
-import { MovesInput,DepotsInput,
-  AddMinutesButton, PlayButton, PauseButton, ReverseButton, ForwardButton,
+import { PlayButton, PauseButton, ReverseButton, ForwardButton,
   ElapsedTimeRange, ElapsedTimeValue, SpeedRange, SpeedValue, SimulationDateTime,
-  NavigationButton, BasedProps, ClickedObject, RoutePaths } from 'harmoware-vis'
+  NavigationButton, ClickedObject, RoutePaths } from 'harmoware-vis'
 import { Icon } from 'react-icons-kit'
-import { ic_delete_forever as icDeleteForever, ic_save as icSave,
-  ic_layers as icLayers, ic_delete as icDelete } from 'react-icons-kit/md'
+import { ic_delete as icDelete } from 'react-icons-kit/md'
 
 import HeatmapRaidusRange from '../containers/HeatmapRaidusRange'
 import HeatmapHeight from '../containers/HeatmapHeight'
@@ -19,27 +17,6 @@ import MapLayerController from './MapLayerController'
 // for clearArc / Scatter
 import * as actions from '../actions/actions'
 import store from '../store'
-
-
-//import { HeatmapState } from '../reducer/heatmapSettings'
-
-/*interface Props extends BasedProps{
-  deleteMovebase?: (maxKeepSecond: number) => void,
-  getMoveDataChecked?: (e: React.ChangeEvent<HTMLInputElement>) => void,
-  getMoveOptionChecked?: (e: React.ChangeEvent<HTMLInputElement>) => void,
-  getDepotOptionChecked?: (e: React.ChangeEvent<HTMLInputElement>) => void,
-  getOptionChangeChecked?: (e: React.ChangeEvent<HTMLInputElement>) => void,
-}
-
-interface State {
-  currentGroupindex: number,
-  routeGroupDisplay: boolean,
-  saveRouteGroup: {
-    clickedObject: ClickedObject[],
-    routePaths: RoutePaths[],
-  }[]
-}
-*/
 
 interface ControllerProps {
   deleteMovebase: any,
@@ -169,12 +146,7 @@ export default class Controller extends React.Component<ControllerProps, ContSta
   render () {
     const { settime, timeBegin, leading, timeLength, actions,
       secperhour, animatePause, animateReverse,
-      getMoveDataChecked, getMoveOptionChecked, getDepotOptionChecked,
-      getOptionChangeChecked, inputFileName, viewport } = this.props
-
-    const { currentGroupindex, routeGroupDisplay, saveRouteGroup } = this.state
-    const displayIndex = saveRouteGroup.length ? currentGroupindex + 1 : 0
-    const { movesFileName, depotsFileName } = inputFileName
+      getMoveDataChecked, getMoveOptionChecked, viewport } = this.props
 
     return (
       <div className='harmovis_controller'>
@@ -198,29 +170,7 @@ export default class Controller extends React.Component<ControllerProps, ContSta
                   <span className='button_span'>Data Save</span>
                 </button>
               </div>
-            </li>            
-            <li><span>移動データロード</span>
-              <div className='harmovis_input_button_column'>
-                <label htmlFor="MovesInput" className="btn btn-outline-light btn-sm w-100">
-                  移動データ選択<MovesInput actions={actions} id="MovesInput" />
-                </label>
-                <div>{movesFileName || '選択されていません'}</div>
-              </div>
-            </li>            
-            {/*
-            <li>
-              <div className='form-check'>
-                <input type='checkbox' id='DepotOptionChecked' onChange={getDepotOptionChecked} className='form-check-input' />
-                <label htmlFor='DepotOptionChecked' className='form-check-label'>停留所データオプション表示</label>
-              </div>
             </li>
-            <li>
-              <div className='form-check'>
-                <input type='checkbox' id='OptionChangeChecked' onChange={getOptionChangeChecked} className='form-check-input' />
-                <label htmlFor='OptionChangeChecked' className='form-check-label'>オプション表示パターン切替</label>
-              </div>
-            </li>
-            */}
 
             <li><span>ナビゲーションパネル</span>
               <div className='btn-group d-flex' role='group'>
@@ -241,16 +191,6 @@ export default class Controller extends React.Component<ControllerProps, ContSta
                   <ReverseButton actions={actions} className='btn btn-outline-light btn-sm w-100' />
                 }
               </div>
-              {/* we do no need specific time control 
-               <div className='btn-group d-flex' role='group'>
-                <AddMinutesButton addMinutes={-5} actions={actions} className='btn btn-outline-light btn-sm w-100' />
-                <AddMinutesButton addMinutes={-1} actions={actions} className='btn btn-outline-light btn-sm w-100' />
-              </div>
-              <div className='btn-group d-flex' role='group'>
-                <AddMinutesButton addMinutes={1} actions={actions} className='btn btn-outline-light btn-sm w-100' />
-                <AddMinutesButton addMinutes={5} actions={actions} className='btn btn-outline-light btn-sm w-100' />
-              </div>
-              */}
             </li>
             <li>
               再現中日時&nbsp;<SimulationDateTime settime={settime} />
